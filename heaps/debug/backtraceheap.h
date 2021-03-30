@@ -1,8 +1,8 @@
 // -*- C++ -*-
 
 #pragma once
-#ifndef HL_BACKTRACE_H
-#define HL_BACKTRACE_H
+#ifndef HL_BACKTRACEHEAP_H
+#define HL_BACKTRACEHEAP_H
 
 /**
  * @class BacktraceHeap
