@@ -12,6 +12,10 @@
 #include <iostream>
 #include <iomanip>
 
+#if __cplusplus >= 201703L
+  #include <filesystem>
+#endif
+
 #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
   #include "backtrace.h"    // // https://github.com/ianlancetaylor/libbacktrace
 #endif
@@ -58,15 +62,77 @@ class Callstack {
     return 0;
   }
 
+  static std::string normalize(const char* filepath) {
+    #if __cplusplus >= 201703L
+      namespace fs = std::filesystem;
+      fs::path p = fs::path(filepath).lexically_normal();
+      fs::path prox = p.lexically_proximate(fs::current_path());
+      if (prox.string().compare(0, 2, "..") == 0) {
+        return p;
+      }
+      return prox;
+    #else
+      return filepath;
+    #endif
+  }
+
 public:
   Callstack() {
     _nFrames = ::backtrace(_frames, MAX_FRAMES);
   }
 
+  class Observer {
+   public:
+    virtual bool updateFrame(void* pc, const char* module, const char* function, const char* filename, int lineno) = 0;
+  };
+
+
+  void observe(Observer& o) const {
+    bool done = false;
+
+    for (int i=0; i<_nFrames && !done; i++) {
+      Dl_info info;
+      if (!dladdr(_frames[i], &info)) {
+        memset(&info, 0, sizeof(info));
+      }
+
+      #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
+        struct Context {
+          Observer& o;
+          Dl_info& info;
+          bool& done;
+        } ctx{o, info, done};
+
+        backtrace_pcinfo(get_libbacktrace_state(),
+                         (uintptr_t)_frames[i], [](void *data, uintptr_t pc,
+                                                   const char *filename, int lineno,
+                                                   const char *function) {
+            Context* ctx = (Context*)data;
+
+            if (!ctx->o.updateFrame((void*)pc, ctx->info.dli_fname, function, filename, lineno)) {
+              ctx->done = true;
+              return 1;
+            }
+
+            return 0;
+        }, [](void *data, const char *msg, int errnum) {
+          // error ignored
+        }, &ctx);
+      #else
+        if (!o.updateFrame(_frames[i], info.dli_fname, info.dli_sname, nullptr, 0)) {
+          done = true;
+        }
+      #endif
+    }
+  };
+
+
+  // XXX rewrite using observe()
   void print(std::ostream& out, const std::string& indent = "  ") const {
+    static const int ptrFieldWidth = 2+2*8; // "0x" + 64-bit ptr
+
     for (int i=0; i<_nFrames; i++) { // XXX skip 1st because it's invariably our malloc() above?
-      out << indent << std::setw(2+2*8) // "0x" + 64-bit ptr
-                    << _frames[i];
+      out << indent << std::setw(ptrFieldWidth) << _frames[i];
 
       Dl_info info;
       if (!dladdr(_frames[i], &info)) {
@@ -74,7 +140,7 @@ public:
       }
 
       if (info.dli_fname) {
-        out << " [" << info.dli_fname << "]";
+        out << " [" << normalize(info.dli_fname) << "]";
       }
 
       bool hasInfo{false};
@@ -93,7 +159,8 @@ public:
             Context* ctx = (Context*)data;
 
             if (ctx->hasInfo) {
-              ctx->out << "\n" << ctx->indent << std::string(18, ' ') << ctx->indent;
+              ctx->out << "\n"
+                       << ctx->indent << std::string(ptrFieldWidth, ' ') << " ...";
             }
 
             if (function) {
@@ -110,7 +177,7 @@ public:
 
             if (filename != nullptr && lineno != 0) {
               ctx->hasInfo = true;
-              ctx->out << " " << filename << ":" << lineno;
+              ctx->out << " " << normalize(filename) << ":" << lineno;
             } 
 
             return 0;   // alternatively, return 1 to stop at the 1st level

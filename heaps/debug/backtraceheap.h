@@ -100,6 +100,20 @@ namespace HL {
         any = true;
       }
     }
+
+    class Observer : public Callstack<MAX_FRAMES>::Observer {
+     public:
+      virtual void updateLeak(void* address, int size) = 0;
+    };
+
+    void observe_leaks(Observer& o) {
+      std::lock_guard<std::recursive_mutex> guard(_mutex);
+
+      for (auto obj = _objects; obj; obj = obj->next) {
+        o.updateLeak(obj+1, SuperHeap::getSize(obj) - sizeof(TraceObj));
+        obj->observe(o);
+      }
+    }
   };
 }
 
