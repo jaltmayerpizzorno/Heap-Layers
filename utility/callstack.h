@@ -81,123 +81,91 @@ public:
     _nFrames = ::backtrace(_frames, MAX_FRAMES);
   }
 
-  class Observer {
-   public:
-    virtual bool updateFrame(void* pc, const char* module, const char* function, const char* filename, int lineno) = 0;
-  };
+
+  int nFrames() const {
+    return _nFrames;
+  }
 
 
-  void observe(Observer& o) const {
-    bool done = false;
+  void* frame(int i) const {
+    assert(i < _nFrames);
+    return _frames[i];
+  }
 
-    for (int i=0; i<_nFrames && !done; i++) {
-      Dl_info info;
-      if (!dladdr(_frames[i], &info)) {
-        memset(&info, 0, sizeof(info));
-      }
 
-      #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
-        struct Context {
-          Observer& o;
-          Dl_info& info;
-          bool& done;
-        } ctx{o, info, done};
-
-        backtrace_pcinfo(get_libbacktrace_state(),
-                         (uintptr_t)_frames[i], [](void *data, uintptr_t pc,
-                                                   const char *filename, int lineno,
-                                                   const char *function) {
-            Context* ctx = (Context*)data;
-
-            if (!ctx->o.updateFrame((void*)pc, ctx->info.dli_fname, function, filename, lineno)) {
-              ctx->done = true;
-              return 1;
-            }
-
-            return 0;
-        }, [](void *data, const char *msg, int errnum) {
-          // error ignored
-        }, &ctx);
-      #else
-        if (!o.updateFrame(_frames[i], info.dli_fname, info.dli_sname, nullptr, 0)) {
-          done = true;
-        }
-      #endif
+  template<class CALLBACK>
+  static void getpcinfo(void* pc, CALLBACK callback) {
+    Dl_info info;
+    if (!dladdr(pc, &info)) {
+      memset(&info, 0, sizeof(info));
     }
-  };
+
+    #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
+      struct Context {
+        decltype(callback)& cb;
+        Dl_info& info;
+      } ctx{callback, info};
+
+      backtrace_pcinfo(get_libbacktrace_state(),
+                       (uintptr_t)pc, [](void *data, uintptr_t pc,
+                                         const char *filename, int lineno,
+                                         const char *function)->int {
+        Context* ctx = (Context*)data;
+
+        return ctx->cb(ctx->info.dli_fname, function, filename, lineno);
+
+      }, [](void *data, const char *msg, int errnum) {
+        // error ignored
+      }, &ctx);
+    #else
+      int offset = (uintptr_t)pc - (uintptr_t)info.dli_saddr;
+      callback(info.dli_fname, info.dli_sname, nullptr, offset);
+    #endif
+  }
 
 
-  // XXX rewrite using observe()
   void print(std::ostream& out, const std::string& indent = "  ") const {
     static const int ptrFieldWidth = 2+2*8; // "0x" + 64-bit ptr
 
     for (int i=0; i<_nFrames; i++) { // XXX skip 1st because it's invariably our malloc() above?
       out << indent << std::setw(ptrFieldWidth) << _frames[i];
 
-      Dl_info info;
-      if (!dladdr(_frames[i], &info)) {
-        memset(&info, 0, sizeof(info));
-      }
+      bool hasModule{false};
+      bool anyOtherInfo{false};
 
-      if (info.dli_fname) {
-        out << " [" << normalize(info.dli_fname) << "]";
-      }
+      getpcinfo(_frames[i], [&](const char* module, const char* function,
+                                const char* filename, int lineno)->bool {
+          if (module && !hasModule) {
+            out << " [" << normalize(module) << "]";
+            hasModule = true;
+          }
 
-      bool hasInfo{false};
+          if (anyOtherInfo) {
+            out << "\n" << indent << std::string(ptrFieldWidth, ' ') << " ...";
+          }
 
-      #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
-        struct Context {
-          std::ostream& out;
-          const std::string& indent;
-          bool& hasInfo;
-        } ctx{out, indent, hasInfo};
+          if (function) {
+            anyOtherInfo = true;
 
-        backtrace_pcinfo(get_libbacktrace_state(),
-                         (uintptr_t)_frames[i], [](void *data, uintptr_t pc,
-                                                   const char *filename, int lineno,
-                                                   const char *function) {
-            Context* ctx = (Context*)data;
-
-            if (ctx->hasInfo) {
-              ctx->out << "\n"
-                       << ctx->indent << std::string(ptrFieldWidth, ' ') << " ...";
+            if (char* cppName = demangle(function)) {
+              out << " " << cppName;
+              cxa_free(cppName);
             }
-
-            if (function) {
-              ctx->hasInfo = true;
-
-              if (char* cppName = demangle(function)) {
-                ctx->out << " " << cppName;
-                cxa_free(cppName);
-              }
-              else {
-                ctx->out << " " << function;
-              }
+            else {
+              out << " " << function;
             }
+          }
 
-            if (filename != nullptr && lineno != 0) {
-              ctx->hasInfo = true;
-              ctx->out << " " << normalize(filename) << ":" << lineno;
-            } 
+          if (filename != nullptr) {
+            anyOtherInfo = true;
+            out << " " << normalize(filename) << ":" << lineno;
+          } 
+          else if (lineno) {
+            out << "+" << lineno; // really offset
+          }
 
-            return 0;   // alternatively, return 1 to stop at the 1st level
-        }, [](void *data, const char *msg, int errnum) {
-          // error ignored
-          // Context* ctx = (Context*)data;
-          // ctx->out << "(libbacktrace: " << msg << ")";
-        }, &ctx);
-      #endif
-      if (!hasInfo && info.dli_sname != 0) {
-        if (char* cppName = demangle(info.dli_sname)) {
-          out << " " << cppName;
-          cxa_free(cppName);
-        }
-        else {
-          out << " " << info.dli_sname;
-        }
-
-        out << "+" << (uintptr_t)_frames[i] - (uintptr_t)info.dli_saddr;
-      }
+          return false; // keep going
+      });
 
       out << "\n";
     }

@@ -16,7 +16,11 @@ namespace HL {
 
   template <class SuperHeap, int MAX_FRAMES = 16>
   class BacktraceHeap : public SuperHeap {
-    struct alignas(SuperHeap::Alignment) TraceObj : public Callstack<MAX_FRAMES> {
+   public:
+    using CallstackType = Callstack<MAX_FRAMES>;
+
+   private:
+    struct alignas(SuperHeap::Alignment) TraceObj : public CallstackType {
       // FIXME use utility/dllist.h ?
       TraceObj* next;
       TraceObj* prev;
@@ -101,17 +105,13 @@ namespace HL {
       }
     }
 
-    class Observer : public Callstack<MAX_FRAMES>::Observer {
-     public:
-      virtual void updateLeak(void* address, int size) = 0;
-    };
 
-    void observe_leaks(Observer& o) {
+    template<class CALLBACK>
+    void observe_leaks(CALLBACK cb) {
       std::lock_guard<std::recursive_mutex> guard(_mutex);
 
       for (auto obj = _objects; obj; obj = obj->next) {
-        o.updateLeak(obj+1, SuperHeap::getSize(obj) - sizeof(TraceObj));
-        obj->observe(o);
+        cb(obj+1, SuperHeap::getSize(obj) - sizeof(TraceObj), static_cast<CallstackType*>(obj));
       }
     }
   };
