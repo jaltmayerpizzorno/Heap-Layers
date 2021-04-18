@@ -93,8 +93,8 @@ public:
   }
 
 
-  static void getpcinfo(void* pc, std::function<int(const char* module, const char* function,
-                                                    const char* filename, int lineno)> callback) {
+  template<class CALLBACK>
+  static void getpcinfo(void* pc, CALLBACK callback) {
     Dl_info info;
     if (!dladdr(pc, &info)) {
       memset(&info, 0, sizeof(info));

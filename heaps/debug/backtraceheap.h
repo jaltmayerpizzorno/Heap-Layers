@@ -106,11 +106,12 @@ namespace HL {
     }
 
 
-    void observe_leaks(std::function<void(void* addr, size_t size, CallstackType* cs)> cb) {
+    template<class CALLBACK>
+    void observe_leaks(CALLBACK cb) {
       std::lock_guard<std::recursive_mutex> guard(_mutex);
 
       for (auto obj = _objects; obj; obj = obj->next) {
-        cb(obj+1, SuperHeap::getSize(obj) - sizeof(TraceObj), obj);
+        cb(obj+1, SuperHeap::getSize(obj) - sizeof(TraceObj), static_cast<CallstackType*>(obj));
       }
     }
   };
