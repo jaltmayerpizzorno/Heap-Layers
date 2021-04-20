@@ -77,7 +77,10 @@ class Callstack {
   }
 
 public:
-  Callstack() {
+  Callstack() {}
+
+
+  void backtrace() {
     _nFrames = ::backtrace(_frames, MAX_FRAMES);
   }
 
@@ -104,6 +107,7 @@ public:
       struct Context {
         decltype(callback)& cb;
         Dl_info& info;
+        bool any{false};
       } ctx{callback, info};
 
       backtrace_pcinfo(get_libbacktrace_state(),
@@ -111,16 +115,19 @@ public:
                                          const char *filename, int lineno,
                                          const char *function)->int {
         Context* ctx = (Context*)data;
+        ctx->any = true;
 
         return ctx->cb(ctx->info.dli_fname, function, filename, lineno);
 
       }, [](void *data, const char *msg, int errnum) {
         // error ignored
       }, &ctx);
-    #else
+    #endif
+
+    if (!ctx.any) {
       int offset = (uintptr_t)pc - (uintptr_t)info.dli_saddr;
       callback(info.dli_fname, info.dli_sname, nullptr, offset);
-    #endif
+    }
   }
 
 
