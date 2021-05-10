@@ -103,13 +103,13 @@ public:
       memset(&info, 0, sizeof(info));
     }
 
-    #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
-      struct Context {
-        decltype(callback)& cb;
-        Dl_info& info;
-        bool any{false};
-      } ctx{callback, info};
+    struct Context {
+      decltype(callback)& cb;
+      Dl_info& info;
+      bool any{false};
+    } ctx{callback, info};
 
+    #if defined(USE_LIBBACKTRACE) && USE_LIBBACKTRACE
       backtrace_pcinfo(get_libbacktrace_state(),
                        (uintptr_t)pc, [](void *data, uintptr_t pc,
                                          const char *filename, int lineno,
