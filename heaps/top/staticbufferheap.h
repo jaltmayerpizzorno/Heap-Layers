@@ -61,6 +61,8 @@ class StaticBufferHeap {
       return nullptr;
     }
 
+    // FIXME use std::align
+
     // Ensure we're not breaking this heap's 'Alignment'.
     alignment = std::max(alignment, (size_t)Alignment);
 
