@@ -108,7 +108,7 @@ namespace HL {
 
 
     template<class CALLBACK>
-    void observe_leaks(CALLBACK cb) {
+    void visit_leaks(CALLBACK cb) {
       std::lock_guard<std::recursive_mutex> guard(_mutex);
 
       for (auto obj = _objects; obj; obj = obj->next) {
